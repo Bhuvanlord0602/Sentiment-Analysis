@@ -1,0 +1,10 @@
+credentials:
+  usernames:
+    testuser:
+      name: Test User
+      password: '$2b$12$KIXExGJbp9q7UoeOj7e1Mu6JzG7Z/.5CqvXOCZxDOUdM7fGpH7MC2'  # password: test123
+
+cookie:
+  name: sentiment_auth
+  key: some_signature_key
+  expiry_days: 1
