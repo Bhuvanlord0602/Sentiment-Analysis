@@ -1,149 +1,133 @@
 import streamlit as st
 import sqlite3
+import bcrypt
 import pickle
 import re
-from sklearn.feature_extraction.text import TfidfVectorizer
 from nltk.corpus import stopwords
 import nltk
+from ntscraper import Nitter
 
-# Optional Twitter scraping
-try:
-    from ntscraper import Nitter
-    SCRAPER_AVAILABLE = True
-except ImportError:
-    SCRAPER_AVAILABLE = False
-
+# -------------- SETUP ----------------
 nltk.download('stopwords')
 stop_words = stopwords.words('english')
 
-# ---------------------- DATABASE SETUP ----------------------
+# DB setup (auto-creates if not exists)
 def init_db():
-    conn = sqlite3.connect("users.db")
+    conn = sqlite3.connect('users.db')
     c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            name TEXT,
-            password TEXT
-        )
-    ''')
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+                 username TEXT PRIMARY KEY,
+                 name TEXT NOT NULL,
+                 password TEXT NOT NULL,
+                 role TEXT DEFAULT 'user')''')
     conn.commit()
     conn.close()
 
-def register_user(username, name, password):
-    conn = sqlite3.connect("users.db")
-    c = conn.cursor()
-    try:
-        c.execute("INSERT INTO users (username, name, password) VALUES (?, ?, ?)", (username, name, password))
-        conn.commit()
-        return True, "User registered successfully."
-    except sqlite3.IntegrityError:
-        return False, "Username already exists."
-    finally:
-        conn.close()
+init_db()
 
-def login_user(username, password):
-    conn = sqlite3.connect("users.db")
+# -------------- AUTHENTICATION ----------------
+def get_user(username):
+    conn = sqlite3.connect('users.db')
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username, password))
+    c.execute("SELECT * FROM users WHERE username=?", (username,))
     user = c.fetchone()
     conn.close()
     return user
 
-# ---------------------- ML MODELS LOADER ----------------------
-def load_model(model_name):
-    with open(f"{model_name}_model.pkl", "rb") as f:
-        model = pickle.load(f)
-    with open(f"{model_name}_vectorizer.pkl", "rb") as f:
-        vectorizer = pickle.load(f)
+def register_user(username, name, password):
+    if get_user(username):
+        return False, "Username already exists"
+    hashed_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO users (username, name, password) VALUES (?, ?, ?)", 
+              (username, name, hashed_pw))
+    conn.commit()
+    conn.close()
+    return True, "Registration successful"
+
+def verify_password(stored_password, input_password):
+    return bcrypt.checkpw(input_password.encode(), stored_password.encode())
+
+# -------------- MODEL LOAD ----------------
+@st.cache_resource
+def load_model_vectorizer():
+    with open('model.pkl', 'rb') as mfile:
+        model = pickle.load(mfile)
+    with open('vectorizer.pkl', 'rb') as vfile:
+        vectorizer = pickle.load(vfile)
     return model, vectorizer
 
-# ---------------------- TEXT PREPROCESSING ----------------------
-def clean_text(text):
-    text = re.sub('[^a-zA-Z]', ' ', text)
-    text = text.lower()
-    text = text.split()
+model, vectorizer = load_model_vectorizer()
+scraper = Nitter()
+
+# -------------- SENTIMENT FUNCTION ----------------
+def predict_sentiment(text):
+    text = re.sub('[^a-zA-Z]', ' ', text).lower().split()
     text = [word for word in text if word not in stop_words]
-    return ' '.join(text)
+    text = ' '.join(text)
+    text_vector = vectorizer.transform([text])
+    result = model.predict(text_vector)
+    return "Positive" if result == 1 else "Negative"
 
-# ---------------------- SENTIMENT PREDICTION ----------------------
-def predict_sentiment(text, model, vectorizer):
-    cleaned = clean_text(text)
-    vector = vectorizer.transform([cleaned])
-    prediction = model.predict(vector)[0]
-    return "Positive" if prediction == 1 else "Negative"
+# -------------- STREAMLIT UI ----------------
+st.title("🔐 Twitter Sentiment Analyzer")
 
-# ---------------------- TWITTER SCRAPER ----------------------
-def get_tweets(username):
-    if not SCRAPER_AVAILABLE:
-        return []
-    scraper = Nitter()
-    tweets_data = scraper.get_tweets(username, mode='user', number=5)
-    return [tweet['text'] for tweet in tweets_data.get('tweets', [])]
+# Login/Register
+if "auth" not in st.session_state:
+    st.session_state.auth = False
 
-# ---------------------- STREAMLIT APP ----------------------
-def main():
-    st.set_page_config(page_title="Sentiment Analysis", layout="centered")
-    st.title("🔐 Sentiment Analyzer with User Auth")
+auth_mode = st.sidebar.selectbox("Choose option", ["Login", "Register"])
+if auth_mode == "Register":
+    st.subheader("Register")
+    name = st.text_input("Full Name")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    if st.button("Register"):
+        success, msg = register_user(username, name, password)
+        st.success(msg) if success else st.error(msg)
 
-    menu = ["Login", "Register"]
-    choice = st.sidebar.selectbox("Menu", menu)
+elif auth_mode == "Login":
+    st.subheader("Login")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    if st.button("Login"):
+        user = get_user(username)
+        if user and verify_password(user[2], password):
+            st.session_state.auth = True
+            st.session_state.username = user[0]
+            st.session_state.name = user[1]
+            st.success(f"Welcome, {user[1]}!")
+            st.rerun()
+        else:
+            st.error("Invalid username or password")
 
-    init_db()
+# Main app
+if st.session_state.auth:
+    st.sidebar.success(f"Logged in as {st.session_state['name']}")
+    if st.sidebar.button("Logout"):
+        st.session_state.clear()
+        st.rerun()
 
-    if choice == "Register":
-        st.subheader("Create New Account")
-        username = st.text_input("Username")
-        name = st.text_input("Name")
-        password = st.text_input("Password", type="password")
-        if st.button("Register"):
-            success, msg = register_user(username, name, password)
-            if success:
-                st.success(str(msg))
-            else:
-                st.error(str(msg))
-
-    elif choice == "Login":
-        st.subheader("Login")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        if st.button("Login"):
-            user = login_user(username, password)
-            if user:
-                st.success(f"Welcome {user[1]}!")
-                run_sentiment_analysis()
-            else:
-                st.error("Invalid credentials")
-
-# ---------------------- MAIN LOGIC AFTER LOGIN ----------------------
-def run_sentiment_analysis():
-    st.header("🔍 Sentiment Analysis")
+    st.header("🔍 Analyze Sentiment")
+    choice = st.selectbox("Choose input method", ["Input Text", "Twitter Username"])
     
-    model_choice = st.selectbox("Choose a model", ["logistic", "svm", "naivebayes"])
-    model, vectorizer = load_model(model_choice)
-
-    option = st.radio("Select input method", ["Input text", "Analyze tweets from username"])
-
-    if option == "Input text":
-        user_text = st.text_area("Enter text to analyze")
-        if st.button("Analyze"):
-            sentiment = predict_sentiment(user_text, model, vectorizer)
+    if choice == "Input Text":
+        input_text = st.text_area("Enter text")
+        if st.button("Analyze Text"):
+            sentiment = predict_sentiment(input_text)
             st.success(f"Sentiment: {sentiment}")
-
-    elif option == "Analyze tweets from username":
-        if not SCRAPER_AVAILABLE:
-            st.warning("Nitter module not installed. Twitter scraping unavailable.")
-            return
-        twitter_user = st.text_input("Enter Twitter username")
-        if st.button("Fetch and Analyze"):
-            tweets = get_tweets(twitter_user)
-            if tweets:
-                for tweet in tweets:
-                    sentiment = predict_sentiment(tweet, model, vectorizer)
-                    color = "lightgreen" if sentiment == "Positive" else "tomato"
-                    st.markdown(f"<div style='background-color:{color}; padding:10px; border-radius:5px;'>{tweet}<br><b>{sentiment}</b></div>", unsafe_allow_html=True)
+    
+    else:
+        username = st.text_input("Enter Twitter username")
+        if st.button("Fetch Tweets"):
+            tweets_data = scraper.get_tweets(username, mode='user', number=5)
+            if 'tweets' in tweets_data:
+                for tweet in tweets_data['tweets']:
+                    sentiment = predict_sentiment(tweet['text'])
+                    color = 'green' if sentiment == "Positive" else 'red'
+                    st.markdown(f"<div style='background:{color}; padding:10px; border-radius:5px;'>"
+                                f"<strong>{sentiment}:</strong> {tweet['text']}</div>", 
+                                unsafe_allow_html=True)
             else:
-                st.info("No tweets found or failed to fetch.")
-
-if __name__ == '__main__':
-    main()
+                st.error("No tweets found or error fetching.")
