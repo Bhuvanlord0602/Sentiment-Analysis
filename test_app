@@ -1,0 +1,50 @@
+import pytest
+import bcrypt
+from app import register_user, verify_password, predict_sentiment
+
+# ---- Test Password Hashing and Verification ----
+
+def test_verify_password():
+    password = "secure123"
+    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    assert verify_password(hashed, password) == True
+    assert verify_password(hashed, "wrongpass") == False
+
+# ---- Test Sentiment Prediction ----
+
+def test_predict_sentiment_positive():
+    text = "I love this product! It's amazing and works great."
+    result = predict_sentiment(text)
+    assert result in ["Positive", "Negative"]  # depending on your model
+
+def test_predict_sentiment_negative():
+    text = "This is the worst thing I have ever bought."
+    result = predict_sentiment(text)
+    assert result in ["Positive", "Negative"]
+
+# ---- Test User Registration Logic (mocked) ----
+
+def test_register_user_duplicate(monkeypatch):
+    # Mock `get_user` to simulate existing user
+    monkeypatch.setattr("app.get_user", lambda u: ("user", "name", "hashedpw"))
+    success, msg = register_user("user", "name", "pass123")
+    assert not success
+    assert msg == "Username already exists"
+
+def test_register_user_new(monkeypatch):
+    # Mock `get_user` and DB actions to simulate new user registration
+    monkeypatch.setattr("app.get_user", lambda u: None)
+
+    class MockCursor:
+        def execute(self, *args): pass
+        def close(self): pass
+
+    class MockConn:
+        def cursor(self): return MockCursor()
+        def commit(self): pass
+        def close(self): pass
+
+    monkeypatch.setattr("sqlite3.connect", lambda db: MockConn())
+    success, msg = register_user("newuser", "Test Name", "pass123")
+    assert success
+    assert msg == "Registration successful"
