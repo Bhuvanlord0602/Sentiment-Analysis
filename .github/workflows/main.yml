@@ -1,0 +1,32 @@
+name: Sentiment Analysis CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v3
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.10
+
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        python -m nltk.downloader stopwords
+
+    - name: ✅ Run test_model.py
+      run: python test_model.py
+
+    - name: 🧪 Check syntax of app.py
+      run: python -m py_compile app.py
