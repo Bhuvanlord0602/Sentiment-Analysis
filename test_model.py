@@ -10,7 +10,7 @@ from nltk.corpus import stopwords
 nltk.download('stopwords')
 
 # ---------------- Model & Vectorizer Test ----------------
-
+"hi how are you"
 def load_model_vectorizer():
     with open("model.pkl", "rb") as mf:
         model = pickle.load(mf)
