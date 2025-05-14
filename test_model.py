@@ -75,6 +75,9 @@ def verify_password(stored_password, input_password):
     return bcrypt.checkpw(input_password.encode(), stored_password.encode())
 
 def test_auth_flow():
+    test_username = "testuser"
+    test_name = "Test User"
+    test_password = "Test@123"
 
     init_test_db()
     registered = register_user(test_username, test_name, test_password)
